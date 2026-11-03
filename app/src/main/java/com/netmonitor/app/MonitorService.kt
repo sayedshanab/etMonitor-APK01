@@ -12,15 +12,19 @@ import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import java.io.DataInputStream
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.Callable
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -32,7 +36,9 @@ import java.util.concurrent.TimeUnit
  * Foreground service that checks internet reachability.
  *
  * Power strategy:
- *  - Checks are plain TCP connects to literal IPs (no DNS / TLS / HTTP).
+ *  - A check is a tiny HTTP request to a literal IP and must receive a real HTTP reply.
+ *    A bare TCP connect is NOT enough: VPN apps (AdGuard, etc.) answer the TCP handshake
+ *    locally and would hide an outage.
  *  - Fast modes (<= 3 s): CPU is kept awake with a *timed* wake lock between checks.
  *  - Slow modes (15 s / 60 s): no wake lock is held while idle; an exact alarm wakes the
  *    CPU just long enough for one check.
@@ -44,8 +50,8 @@ import java.util.concurrent.TimeUnit
 class MonitorService : Service() {
 
     companion object {
-        // Plain TCP connects to literal IPs: no DNS, no TLS, no HTTP -> very cheap per check.
-        private val TARGETS = listOf("1.1.1.1" to 443, "8.8.8.8" to 443)
+        // Literal IPs (no DNS). Both are Cloudflare and answer plain HTTP on port 80.
+        private val TARGETS = listOf("1.1.1.1", "1.0.0.1")
 
         private const val ACTION_ALARM = "com.netmonitor.app.PROBE_ALARM"
         private const val RETRY_MS = 1000L
@@ -70,7 +76,7 @@ class MonitorService : Service() {
     private val probePool: ExecutorService = Executors.newCachedThreadPool()
 
     private var netCb: ConnectivityManager.NetworkCallback? = null
-    @Volatile private var lastValidated: Boolean? = null
+    private val validated = ConcurrentHashMap<Network, Boolean>()
     private var receiverRegistered = false
     @Volatile private var active = false
     private var lastStatusText = ""
@@ -157,27 +163,31 @@ class MonitorService : Service() {
             } catch (_: Exception) { }
         }
         netCb = null
-        lastValidated = null
+        validated.clear()
         releaseWake()
     }
 
+    /**
+     * Watches the real (non-VPN) networks. A default NetworkRequest already excludes VPNs,
+     * so Wi-Fi / mobile data dropping triggers an immediate check even while a VPN stays "up".
+     */
     private fun registerNetworkCallback() {
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) = poke()
             override fun onLost(network: Network) {
-                lastValidated = null
+                validated.remove(network)
                 poke()
             }
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                 val v = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-                if (lastValidated != v) {
-                    lastValidated = v
-                    poke()
-                }
+                if (validated.put(network, v) != v) poke()
             }
         }
         try {
-            getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(cb)
+            val request = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            getSystemService(ConnectivityManager::class.java).registerNetworkCallback(request, cb)
             netCb = cb
         } catch (_: Exception) { }
     }
@@ -258,17 +268,52 @@ class MonitorService : Service() {
 
     // ---------------------------------------------------------------- the check
 
-    /** Returns latency in ms on success, -1 on timeout/failure, -2 if interrupted. */
+    /**
+     * Networks that really carry traffic (Wi-Fi / mobile / ethernet / tethering), excluding VPNs.
+     * A VPN app (e.g. AdGuard VPN) answers TCP connects locally, so probing through it reports
+     * "connected" even when the real network is down. Returns null if the list is unavailable.
+     */
+    @Suppress("DEPRECATION")
+    private fun physicalNetworks(): List<Network>? {
+        val cm = getSystemService(ConnectivityManager::class.java)
+        return try {
+            cm.allNetworks.filter { n ->
+                val c = cm.getNetworkCapabilities(n)
+                c != null &&
+                    c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * End-to-end check: connect, send a minimal HTTP request and require an "HTTP/" reply.
+     * Returns latency in ms on success, -1 on timeout/failure, -2 if interrupted.
+     */
     private fun probe(timeoutMs: Int): Int {
-        val tasks = TARGETS.map { (host, port) ->
+        // No real (non-VPN) network at all => definitely offline, even if a VPN app says "up".
+        physicalNetworks()?.let { if (it.isEmpty()) return -1 }
+        val tasks = TARGETS.map { host ->
             Callable<Int> {
                 val t0 = System.nanoTime()
-                Socket().use { s -> s.connect(InetSocketAddress(host, port), timeoutMs) }
+                Socket().use { sock ->
+                    sock.tcpNoDelay = true
+                    sock.connect(InetSocketAddress(host, 80), timeoutMs)
+                    sock.soTimeout = timeoutMs
+                    val req = "GET / HTTP/1.1\r\nHost: $host\r\nUser-Agent: NetMonitor\r\n" +
+                        "Connection: close\r\n\r\n"
+                    sock.getOutputStream().apply { write(req.toByteArray()); flush() }
+                    val head = ByteArray(5)
+                    DataInputStream(sock.getInputStream()).readFully(head)
+                    if (String(head) != "HTTP/") throw IOException("bad reply")
+                }
                 ((System.nanoTime() - t0) / 1_000_000L).toInt().coerceAtLeast(1)
             }
         }
         return try {
-            probePool.invokeAny(tasks, timeoutMs + 300L, TimeUnit.MILLISECONDS)
+            probePool.invokeAny(tasks, timeoutMs + 500L, TimeUnit.MILLISECONDS)
         } catch (e: InterruptedException) {
             -2
         } catch (e: Exception) {
@@ -278,7 +323,7 @@ class MonitorService : Service() {
 
     private fun tick() {
         val threshold = prefs.threshold
-        val timeout = prefs.intervalMs.coerceIn(1000, 2000)
+        val timeout = prefs.intervalMs.coerceIn(1500, 2500)
         val lat = probe(timeout)
         if (lat == -2 || !active) return
 
@@ -344,6 +389,7 @@ class MonitorService : Service() {
     override fun onDestroy() {
         stopLoop()
         probePool.shutdownNow()
+        AlarmPlayer.stop()
         MonitorState.reset()
         MonitorState.log("Stopped - تم إيقاف المراقبة", "warn")
         super.onDestroy()

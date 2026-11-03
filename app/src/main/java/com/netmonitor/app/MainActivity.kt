@@ -100,12 +100,12 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.clearLog).setOnClickListener {
             MonitorState.clearLog()
-            MonitorState.log("v2.1 جاهز - يسجل كل Request timed out لحظياً", "ok")
+            MonitorState.log("v2.3 جاهز - يسجل كل Request timed out لحظياً", "ok")
         }
         btnBattery.setOnClickListener { requestBatteryExemption() }
 
         if (MonitorState.snapshot().isEmpty()) {
-            MonitorState.log("v2.1 جاهز - يسجل كل Request timed out لحظياً", "ok")
+            MonitorState.log("v2.3 جاهز - يسجل كل Request timed out لحظياً", "ok")
         }
 
         // Process was killed while monitoring was on: bring the service back.

@@ -6,15 +6,13 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.media.AudioAttributes
-import android.net.Uri
 import androidx.core.app.NotificationCompat
 
 object Notifier {
-    // Channel sounds cannot be changed after creation, so bump the suffix if you change a sound.
+    // Channel settings cannot be changed after creation, so bump the suffix when they change.
     const val CH_STATUS = "status_v1"
-    const val CH_DOWN = "down_v1"
-    const val CH_UP = "up_v1"
+    const val CH_DOWN = "down_v2"
+    const val CH_UP = "up_v2"
 
     const val ID_FG = 1
     const val ID_DOWN = 2
@@ -23,20 +21,13 @@ object Notifier {
     const val ACTION_MUTE = "com.netmonitor.app.MUTE"
     const val ACTION_STOP = "com.netmonitor.app.STOP"
 
-    private fun rawUri(ctx: Context, res: Int): Uri =
-        Uri.parse("android.resource://${ctx.packageName}/$res")
-
     fun ensureChannels(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
 
-        val alarmAttrs = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ALARM)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
-        val notifAttrs = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
+        // Old channels had a notification sound that many phones silence: sounds are now
+        // played by AlarmPlayer on the alarm stream, the channels only pop up + vibrate.
+        nm.deleteNotificationChannel("down_v1")
+        nm.deleteNotificationChannel("up_v1")
 
         val status = NotificationChannel(
             CH_STATUS, "حالة المراقبة", NotificationManager.IMPORTANCE_LOW
@@ -48,8 +39,8 @@ object Notifier {
         val down = NotificationChannel(
             CH_DOWN, "تنبيه فصل النت", NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "نغمة تنبيه عند فصل الانترنت"
-            setSound(rawUri(ctx, R.raw.disconnect), alarmAttrs)
+            description = "إشعار منبثق عند فصل الانترنت (النغمة تُشغَّل من التطبيق)"
+            setSound(null, null)
             enableVibration(true)
             vibrationPattern = longArrayOf(0, 500, 250, 500, 250, 800)
         }
@@ -57,8 +48,8 @@ object Notifier {
         val up = NotificationChannel(
             CH_UP, "تنبيه رجوع النت", NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "نغمة عند رجوع الانترنت"
-            setSound(rawUri(ctx, R.raw.reconnect), notifAttrs)
+            description = "إشعار منبثق عند رجوع الانترنت (النغمة تُشغَّل من التطبيق)"
+            setSound(null, null)
             enableVibration(true)
             vibrationPattern = longArrayOf(0, 200, 100, 200)
         }
@@ -98,6 +89,8 @@ object Notifier {
 
     fun disconnect(ctx: Context, threshold: Int, repeat: Boolean) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
+        // Sound first: it must play even if the notification is hidden or silenced.
+        AlarmPlayer.play(ctx, R.raw.disconnect, repeat)
         val n = NotificationCompat.Builder(ctx, CH_DOWN)
             .setSmallIcon(R.drawable.ic_net)
             .setContentTitle("🚨 الانترنت فصل!")
@@ -106,16 +99,16 @@ object Notifier {
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
             .setContentIntent(openApp(ctx))
+            .setDeleteIntent(actionIntent(ctx, ACTION_MUTE, 3))
             .addAction(0, "🔇 إسكات", actionIntent(ctx, ACTION_MUTE, 1))
             .build()
-        // Repeats the channel sound until the notification is dismissed (works on many, not all, devices).
-        if (repeat) n.flags = n.flags or Notification.FLAG_INSISTENT
         nm.notify(ID_DOWN, n)
     }
 
     fun reconnect(ctx: Context, downSeconds: Long) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         nm.cancel(ID_DOWN)
+        AlarmPlayer.play(ctx, R.raw.reconnect, false) // also stops the looping disconnect alarm
         val n = NotificationCompat.Builder(ctx, CH_UP)
             .setSmallIcon(R.drawable.ic_net)
             .setContentTitle("✅ الانترنت رجع!")
@@ -129,6 +122,7 @@ object Notifier {
     }
 
     fun mute(ctx: Context) {
+        AlarmPlayer.stop()
         ctx.getSystemService(NotificationManager::class.java).cancel(ID_DOWN)
     }
 }
