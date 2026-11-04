@@ -18,7 +18,13 @@ jobs:
           gradle-version: '8.9'
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
+      - name: Name the APK after its version
+        run: |
+          VER=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/NetMonitor-v${VER}.apk"
+          echo "VER=${VER}" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
-          name: NetMonitor-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: NetMonitor-v${{ env.VER }}
+          path: dist/NetMonitor-v${{ env.VER }}.apk
