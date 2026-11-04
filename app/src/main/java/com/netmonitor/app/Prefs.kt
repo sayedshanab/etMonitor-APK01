@@ -29,4 +29,9 @@ class Prefs(ctx: Context) {
     var batteryAsked: Boolean
         get() = sp.getBoolean("battery_asked", false)
         set(v) = sp.edit().putBoolean("battery_asked", v).apply()
+
+    /** Alarm loudness 0..300 %. Above 100 % the sound is boosted with a loudness enhancer. */
+    var volumePct: Int
+        get() = sp.getInt("volume_pct", 150)
+        set(v) = sp.edit().putInt("volume_pct", v.coerceIn(0, 300)).apply()
 }

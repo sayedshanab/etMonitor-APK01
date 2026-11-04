@@ -112,7 +112,7 @@ object Notifier {
         val n = NotificationCompat.Builder(ctx, CH_UP)
             .setSmallIcon(R.drawable.ic_net)
             .setContentTitle("✅ الانترنت رجع!")
-            .setContentText("كان فاصل لمدة $downSeconds ثانية")
+            .setContentText("استمر الانقطاع لمدة ${Fmt.duration(downSeconds)}")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setTimeoutAfter(15_000)

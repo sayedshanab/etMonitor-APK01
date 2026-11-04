@@ -133,7 +133,7 @@ class MonitorService : Service() {
         active = true
         MonitorState.running = true
         MonitorState.log(
-            "Started - فحص كل ${prefs.intervalMs / 1000} ثانية (خدمة خلفية)", "ok"
+            "▶️ Started - المراقبة نشطة كل ${prefs.intervalMs / 1000} ثانية", "ok"
         )
         scheduler = Executors.newSingleThreadScheduledExecutor()
         ContextCompat.registerReceiver(
@@ -332,13 +332,21 @@ class MonitorService : Service() {
 
         if (lat >= 0) {
             if (s.disconnected) {
-                val wasDown = maxOf(1L, (now - s.downSince) / 1000)
+                val wasDown = if (s.downSince > 0) {
+                    maxOf(1L, Math.round((now - s.downSince) / 1000.0))
+                } else 1L
                 s.disconnected = false
+                s.closeOutage(now, wasDown, "$lat ms")
                 s.downSince = 0L
                 s.fails = 0
                 s.latency = lat
                 s.status = Status.OK
-                s.log("✅ BACK ONLINE after ${wasDown}s (${lat}ms) - الانترنت رجع", "ok")
+                s.reconnectAt = now
+                s.reconnectText = "✅ النت رجع بعد انقطاع دام (${Fmt.duration(wasDown)})!"
+                s.log(
+                    "✅ BACK ONLINE - رجع النت بعد انقطاع دام (${Fmt.duration(wasDown)}) - البنج: ${lat}ms",
+                    "ok"
+                )
                 Notifier.reconnect(this, wasDown)
             } else {
                 if (s.fails > 0) s.log("ℹ️ استقر الاتصال بعد فقد ${s.fails} باكت (${lat}ms)", "ok")
@@ -356,10 +364,13 @@ class MonitorService : Service() {
 
             if (!s.disconnected) {
                 if (s.fails >= threshold) {
+                    val startTs = if (s.downSince > 0) s.downSince else now
+                    val initialDur = maxOf(1L, Math.round((now - startTs) / 1000.0))
                     s.disconnected = true
                     s.disconnectCount++
+                    s.openOutage(startTs, initialDur)
                     s.status = Status.FAIL
-                    s.log("🚨 DISCONNECTED - الانترنت فصل رسمياً!", "fail")
+                    s.log("🚨 DISCONNECTED - الانترنت فصل رسمياً! (بداية الفصل: ${s.lastDownStart})", "fail")
                     Notifier.disconnect(this, threshold, prefs.repeatAlarm)
                 } else {
                     s.status = Status.WARN
@@ -390,8 +401,10 @@ class MonitorService : Service() {
         stopLoop()
         probePool.shutdownNow()
         AlarmPlayer.stop()
+        MonitorState.stopOngoing()
         MonitorState.reset()
-        MonitorState.log("Stopped - تم إيقاف المراقبة", "warn")
+        MonitorState.log("⏸️ Stopped - تم إيقاف المراقبة بنجاح", "warn")
+        MonitorState.saveNow()
         super.onDestroy()
     }
 }
