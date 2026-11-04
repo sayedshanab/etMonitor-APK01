@@ -193,7 +193,7 @@ class MainActivity : AppCompatActivity() {
         btnBattery.setOnClickListener { requestBatteryExemption() }
 
         if (MonitorState.snapshot().isEmpty()) {
-            MonitorState.log("v2.8 جاهز (By Mahmoud_Kamal) - فحص حقيقي من طرف لطرف، يعمل مع الـ VPN", "ok")
+            MonitorState.log("v2.9 جاهز (By Mahmoud_Kamal) - فحص حقيقي من طرف لطرف، يعمل مع الـ VPN", "ok")
         }
 
         // Process was killed while monitoring was on: bring the service back.

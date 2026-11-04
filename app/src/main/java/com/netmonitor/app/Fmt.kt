@@ -1,13 +1,12 @@
 package com.netmonitor.app
 
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
 /** Formatting helpers. Digits are always Western (0-9), like the web version. */
 object Fmt {
-    private val arLatin: Locale = Locale.forLanguageTag("ar-u-nu-latn")
-
     fun toWestern(input: String): String {
         val sb = StringBuilder(input.length)
         for (ch in input) {
@@ -22,8 +21,15 @@ object Fmt {
         return sb.toString()
     }
 
-    fun time(ts: Long = System.currentTimeMillis()): String =
-        toWestern(SimpleDateFormat("hh:mm:ss a", arLatin).format(Date(ts)))
+    /** 12-hour clock "hh:mm:ss AM/PM", identical to the web version (no locale dependence). */
+    fun time(ts: Long = System.currentTimeMillis()): String {
+        val c = Calendar.getInstance().apply { timeInMillis = ts }
+        val h = c.get(Calendar.HOUR_OF_DAY)
+        val h12 = if (h % 12 == 0) 12 else h % 12
+        return "%02d:%02d:%02d %s".format(
+            Locale.US, h12, c.get(Calendar.MINUTE), c.get(Calendar.SECOND), if (h >= 12) "PM" else "AM"
+        )
+    }
 
     fun date(ts: Long = System.currentTimeMillis()): String =
         SimpleDateFormat("yyyy/M/d", Locale.US).format(Date(ts))

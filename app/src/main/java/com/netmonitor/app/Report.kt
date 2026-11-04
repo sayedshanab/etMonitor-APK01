@@ -49,7 +49,7 @@ object Report {
         val lines = ArrayList<String>()
         lines += bar
         lines += "   🌐 تقرير حالة وانقطاعات الإنترنت (ISP Technical Outage Report)"
-        lines += "   مراقب النت الذكي v2.8 - (By Mahmoud_Kamal)"
+        lines += "   مراقب النت الذكي v2.9 - (By Mahmoud_Kamal)"
         lines += "   تاريخ استخراج التقرير: ${Fmt.date()} - ${Fmt.time()}"
         lines += bar
         lines += ""

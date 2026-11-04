@@ -11,8 +11,8 @@ android {
         applicationId = "com.netmonitor.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "2.8"
+        versionCode = 4
+        versionName = "2.9"
     }
 
     // Fixed signing key so every new build installs over the previous one.
